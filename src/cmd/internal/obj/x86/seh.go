@@ -105,11 +105,15 @@ func populateSeh(ctxt *obj.Link, s *obj.LSym) (sehsym *obj.LSym) {
 
 	var exceptionHandler *obj.LSym
 	var flags uint8
-	if s.Name == "runtime.asmcgocall_landingpad" {
+	if objabi.OriginalFuncName(s.Name) == "runtime.asmcgocall_landingpad" {
 		// Most cgo calls go through runtime.asmcgocall_landingpad,
 		// we can use it to catch exceptions from C code.
 		// TODO: use a more generic approach to identify which calls need an exception handler.
-		exceptionHandler = ctxt.Lookup("runtime.sehtramp")
+		exceptionHandlerName := "runtime.sehtramp"
+		if obfuscated := objabi.ObfuscatedSymbol(exceptionHandlerName); obfuscated != "" {
+			exceptionHandlerName = obfuscated
+		}
+		exceptionHandler = ctxt.Lookup(exceptionHandlerName)
 		if exceptionHandler == nil {
 			ctxt.Diag("missing runtime.sehtramp\n")
 			return

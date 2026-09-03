@@ -163,11 +163,21 @@ const (
 )
 
 func instinit(ctxt *obj.Link) {
-	morestack = ctxt.Lookup("runtime.morestack")
-	morestackNoCtxt = ctxt.Lookup("runtime.morestack_noctxt")
-	sigpanic = ctxt.LookupABI("runtime.sigpanic", obj.ABIInternal)
+	lookupRuntime := func(name string) *obj.LSym {
+		if obfuscated := objabi.ObfuscatedSymbol(name); obfuscated != "" {
+			name = obfuscated
+		}
+		return ctxt.Lookup(name)
+	}
+	morestack = lookupRuntime("runtime.morestack")
+	morestackNoCtxt = lookupRuntime("runtime.morestack_noctxt")
+	sigpanicName := "runtime.sigpanic"
+	if obfuscated := objabi.ObfuscatedSymbol(sigpanicName); obfuscated != "" {
+		sigpanicName = obfuscated
+	}
+	sigpanic = ctxt.LookupABI(sigpanicName, obj.ABIInternal)
 	wasm_pc_f_loop_export = ctxt.Lookup("wasm_pc_f_loop_export")
-	runtimeNotInitialized = ctxt.Lookup("runtime.notInitialized")
+	runtimeNotInitialized = lookupRuntime("runtime.notInitialized")
 }
 
 func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
@@ -424,7 +434,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			// low-level WebAssembly call to function
 			switch jmp.To.Type {
 			case obj.TYPE_MEM:
-				if !notUsePC_B[jmp.To.Sym.Name] {
+				if !notUsePC_B[objabi.OriginalFuncName(jmp.To.Sym.Name)] {
 					// Set PC_B parameter to function entry.
 					p = appendp(p, AI32Const, constAddr(0))
 				}
@@ -480,7 +490,7 @@ func preprocess(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 			// low-level WebAssembly call to function
 			switch call.To.Type {
 			case obj.TYPE_MEM:
-				if !notUsePC_B[call.To.Sym.Name] {
+				if !notUsePC_B[objabi.OriginalFuncName(call.To.Sym.Name)] {
 					// Set PC_B parameter to function entry.
 					p = appendp(p, AI32Const, constAddr(0))
 				}
@@ -1096,7 +1106,7 @@ func assemble(ctxt *obj.Link, s *obj.LSym, newprog obj.ProgAlloc) {
 
 	// Function starts with declaration of locals: numbers and types.
 	// Some functions use a special calling convention.
-	switch s.Name {
+	switch objabi.OriginalFuncName(s.Name) {
 	case "_rt0_wasm_js", "_rt0_wasm_wasip1", "_rt0_wasm_wasip1_lib",
 		"wasm_export_run", "wasm_export_resume", "wasm_export_getsp",
 		"wasm_pc_f_loop", "runtime.wasmDiv", "runtime.wasmTruncS", "runtime.wasmTruncU", "memeqbody":

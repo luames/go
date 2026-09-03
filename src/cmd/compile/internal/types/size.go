@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"cmd/compile/internal/base"
+	"cmd/internal/objabi"
 	"cmd/internal/src"
 	"internal/buildcfg"
 	"internal/types/errors"
@@ -196,11 +197,12 @@ func calcStructOffset(t *Type, fields []*Field, offset int64) int64 {
 	return offset
 }
 
-func isAtomicStdPkg(p *Pkg) bool {
+func isAtomicStdPkg(p *Pkg, name string) bool {
 	if p.Prefix == `""` {
 		panic("bad package prefix")
 	}
-	return p.Prefix == "sync/atomic" || p.Prefix == "internal/runtime/atomic"
+	path, _ := objabi.OriginalPackageSymbol(p.Path, name)
+	return path == "sync/atomic" || path == "internal/runtime/atomic"
 }
 
 // CalcSize calculates and stores the size, alignment, eq/hash algorithm,
@@ -488,8 +490,9 @@ func CalcStructSize(t *Type) {
 	// Recognize special types. This logic is duplicated in go/types and
 	// cmd/compile/internal/types2.
 	if sym := t.Sym(); sym != nil {
+		_, name := objabi.OriginalPackageSymbol(sym.Pkg.Path, sym.Name)
 		switch {
-		case sym.Name == "align64" && isAtomicStdPkg(sym.Pkg):
+		case name == "align64" && isAtomicStdPkg(sym.Pkg, sym.Name):
 			maxAlign = 8
 
 		case buildcfg.Experiment.SIMD && (sym.Pkg.Path == "simd/archsimd") && len(t.Fields()) >= 1:

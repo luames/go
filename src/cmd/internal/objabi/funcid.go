@@ -43,6 +43,7 @@ func GetFuncID(name string, isWrapper bool) abi.FuncID {
 	if isWrapper {
 		return abi.FuncIDWrapper
 	}
+	name = OriginalFuncName(name)
 	if strings.HasPrefix(name, "runtime.") {
 		if id, ok := funcIDs[name[len("runtime."):]]; ok {
 			return id

@@ -4,7 +4,9 @@
 
 package objabi
 
-import "sync"
+import (
+	"sync"
+)
 
 // PkgSpecial indicates special build properties of a given runtime-related
 // package.
@@ -104,6 +106,7 @@ var allowAsmABIPkgs = []string{
 
 // LookupPkgSpecial returns special build properties for the given package path.
 func LookupPkgSpecial(pkgPath string) PkgSpecial {
+	pkgPath = OriginalPackagePath(pkgPath)
 	return pkgSpecialsOnce()[pkgPath]
 }
 

@@ -6,6 +6,8 @@
 
 package types2
 
+import "cmd/internal/objabi"
+
 // Sizes defines the sizing functions for package unsafe.
 type Sizes interface {
 	// Alignof returns the alignment of a variable of type T.
@@ -117,10 +119,12 @@ func IsSyncAtomicAlign64(T Type) bool {
 		return false
 	}
 	obj := named.Obj()
-	return obj.Name() == "align64" &&
-		obj.Pkg() != nil &&
-		(obj.Pkg().Path() == "sync/atomic" ||
-			obj.Pkg().Path() == "internal/runtime/atomic")
+	if obj.Pkg() == nil {
+		return false
+	}
+	path, name := obj.Pkg().Path(), obj.Name()
+	path, name = objabi.OriginalSymbolParts(path, name)
+	return name == "align64" && (path == "sync/atomic" || path == "internal/runtime/atomic")
 }
 
 func (s *StdSizes) Offsetsof(fields []*Var) []int64 {

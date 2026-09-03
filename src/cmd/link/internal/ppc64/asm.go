@@ -408,7 +408,11 @@ func genaddmoduledata(ctxt *ld.Link, ldr *loader.Loader) {
 	} else if s := ldr.Lookup("local.pluginmoduledata", 0); s != 0 {
 		tgt = s
 	} else {
-		tgt = ldr.LookupOrCreateSym("runtime.firstmoduledata", 0)
+		lookupName := "runtime.firstmoduledata"
+		if obf := loader.GetGarbleObfuscatedSymbol(lookupName); obf != "" {
+			lookupName = obf
+		}
+		tgt = ldr.LookupOrCreateSym(lookupName, 0)
 	}
 
 	if !hasPCrel {
@@ -1243,7 +1247,7 @@ func gentramp(ctxt *ld.Link, ldr *loader.Loader, tramp *loader.SymbolBuilder, ta
 
 	// ELFv2 save/restore functions use R0/R12 in special ways, therefore trampolines
 	// as generated here will not always work correctly.
-	if strings.HasPrefix(ldr.SymName(target), "runtime.elf_") {
+	if loader.HasGarbleRuntimePrefix(ldr.SymName(target), ".elf_") {
 		log.Fatalf("Internal linker does not support trampolines to ELFv2 ABI"+
 			" register save/restore function %s", ldr.SymName(target))
 	}
@@ -1432,7 +1436,7 @@ func archreloc(target *ld.Target, ldr *loader.Loader, syms *ld.ArchSyms, r loade
 		// If we are linking PIE or shared code, non-PCrel golang generated object files have an extra 2 instruction prologue
 		// to regenerate the TOC pointer from R12.  The exception are two special case functions tested below.  Note,
 		// local call offsets for externally generated objects are accounted for when converting into golang relocs.
-		if !hasPCrel && !ldr.AttrExternal(rs) && ldr.AttrShared(rs) && tgtName != "runtime.duffzero" && tgtName != "runtime.duffcopy" {
+		if !hasPCrel && !ldr.AttrExternal(rs) && ldr.AttrShared(rs) && !loader.IsGarbleRuntimeDuff(tgtName) {
 			// Furthermore, only apply the offset if the target looks like the start of a function call.
 			if r.Add() == 0 && ldr.SymType(rs).IsText() {
 				t += 8

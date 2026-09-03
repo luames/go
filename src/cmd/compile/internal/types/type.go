@@ -1639,7 +1639,8 @@ func NewNamed(obj Object) *Type {
 		t.SetIsShape(true)
 		t.SetHasShape(true)
 	}
-	if sym.Pkg.Path == "internal/runtime/sys" && sym.Name == "nih" {
+	pkgPath, name := objabi.OriginalPackageSymbol(sym.Pkg.Path, sym.Name)
+	if pkgPath == "internal/runtime/sys" && name == "nih" {
 		// Recognize the special not-in-heap type. Any type including
 		// this type will also be not-in-heap.
 		// This logic is duplicated in go/types and
@@ -1866,8 +1867,9 @@ func IsMethodApplicable(t *Type, m *Field) bool {
 // RuntimeSymName returns the name of s if it's in package "runtime"; otherwise
 // it returns "".
 func RuntimeSymName(s *Sym) string {
-	if s.Pkg.Path == "runtime" {
-		return s.Name
+	pkgPath, name := objabi.OriginalPackageSymbol(s.Pkg.Path, s.Name)
+	if pkgPath == "runtime" {
+		return name
 	}
 	return ""
 }
