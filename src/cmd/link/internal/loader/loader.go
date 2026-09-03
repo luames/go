@@ -27,6 +27,57 @@ import (
 
 var _ = fmt.Print
 
+// GetGarbleObfuscatedPath returns the obfuscated path for an original package path.
+// Returns the original path if no obfuscation is found.
+func GetGarbleObfuscatedPath(origPath string) string {
+	return objabi.ObfuscatedPackagePath(origPath)
+}
+
+var garbleObfuscatedSymbol = objabi.ObfuscatedSymbol
+var garbleOriginalFuncName = objabi.OriginalFuncName
+
+// GetGarbleObfuscatedSymbol returns the obfuscated symbol name for an original symbol.
+// Returns empty string if no obfuscation is found.
+func GetGarbleObfuscatedSymbol(origName string) string {
+	return garbleObfuscatedSymbol(origName)
+}
+
+// IsGarbleRuntimePkg returns true if the given package path (possibly obfuscated)
+// corresponds to the runtime package.
+func IsGarbleRuntimePkg(pkg string) bool {
+	return objabi.OriginalPackagePath(pkg) == "runtime"
+}
+
+// TranslateGarbleBuiltinName attempts to translate an obfuscated symbol name
+// to its original form for builtin lookup. For example, if the runtime package
+// is obfuscated from "runtime" to "abc123" and "newobject" is obfuscated to "xyz",
+// then "abc123.xyz" should be translated to "runtime.newobject" to look up in the builtin table.
+func TranslateGarbleBuiltinName(name string) string {
+	return garbleOriginalFuncName(name)
+}
+
+// IsGarbleRuntimeDuff reports whether name identifies either runtime DUFF
+// function after applying Garble's symbol translation.
+func IsGarbleRuntimeDuff(name string) bool {
+	original := garbleOriginalFuncName(name)
+	return original == "runtime.duffzero" || original == "runtime.duffcopy"
+}
+
+// HasGarbleRuntimePrefix reports whether name starts with runtime followed by
+// infix, accounting for an obfuscated runtime package and an optional type:
+// prefix. Infix identifies the linker namespace being classified, such as
+// ".gcbits.", ".text.", or ".elf_".
+func HasGarbleRuntimePrefix(name, infix string) bool {
+	name = strings.TrimPrefix(name, "type:")
+	if strings.HasPrefix(name, "runtime"+infix) {
+		return true
+	}
+	if idx := strings.Index(name, infix); idx > 0 {
+		return objabi.OriginalPackagePath(name[:idx]) == "runtime"
+	}
+	return false
+}
+
 // Sym encapsulates a global symbol index, used to identify a specific
 // Go symbol. The 0-valued Sym is corresponds to an invalid symbol.
 type Sym = sym.LoaderSym
@@ -710,6 +761,10 @@ func (l *Loader) resolve(r *oReader, s goobj.SymRef) Sym {
 		if bi := l.builtinSyms[s.SymIdx]; bi != 0 {
 			return bi
 		}
+		if bi := l.resolveMissingBuiltin(int(s.SymIdx), r.version); bi != 0 {
+			l.builtinSyms[s.SymIdx] = bi
+			return bi
+		}
 		l.reportMissingBuiltin(int(s.SymIdx), r.unit.Lib.Pkg)
 		return 0
 	case goobj.PkgIdxSelf:
@@ -718,6 +773,15 @@ func (l *Loader) resolve(r *oReader, s goobj.SymRef) Sym {
 		rr = l.objs[r.pkg[p]]
 	}
 	return l.toGlobal(rr, s.SymIdx)
+}
+
+// resolveMissingBuiltin looks up a builtin definition by its canonical name
+// and ABI. Lookup also checks GARBLE_SYMBOL_MAP, so an obfuscated definition
+// can repair a builtin entry that was not recognized while symbols were
+// preloaded. A genuinely missing definition remains fatal.
+func (l *Loader) resolveMissingBuiltin(bsym, localSymVersion int) Sym {
+	bname, babi := goobj.BuiltinName(bsym)
+	return l.Lookup(bname, abiToVer(uint16(babi), localSymVersion))
 }
 
 // reportMissingBuiltin issues an error in the case where we have a
@@ -748,9 +812,27 @@ func (l *Loader) reportMissingBuiltin(bsym int, reflib string) {
 // new symbol.
 func (l *Loader) Lookup(name string, ver int) Sym {
 	if ver >= sym.SymVerStatic || ver < 0 {
-		return l.extStaticSyms[nameVer{name, ver}]
+		if s := l.extStaticSyms[nameVer{name, ver}]; s != 0 {
+			return s
+		}
+		// Try garble obfuscated name
+		if obfName := GetGarbleObfuscatedSymbol(name); obfName != "" {
+			if s := l.extStaticSyms[nameVer{obfName, ver}]; s != 0 {
+				return s
+			}
+		}
+		return 0
 	}
-	return l.symsByName[ver][name]
+	if s := l.symsByName[ver][name]; s != 0 {
+		return s
+	}
+	// Try garble obfuscated name
+	if obfName := GetGarbleObfuscatedSymbol(name); obfName != "" {
+		if s := l.symsByName[ver][obfName]; s != 0 {
+			return s
+		}
+	}
+	return 0
 }
 
 // Check that duplicate symbols have same contents.
@@ -2269,7 +2351,6 @@ func (st *loadState) preloadSyms(r *oReader, kind int) {
 		panic("preloadSyms: bad kind")
 	}
 	l.growAttrBitmaps(len(l.objSyms) + int(end-start))
-	loadingRuntimePkg := r.unit.Lib.Pkg == "runtime"
 	for i := start; i < end; i++ {
 		osym := r.Sym(i)
 		var name string
@@ -2299,10 +2380,25 @@ func (st *loadState) preloadSyms(r *oReader, kind int) {
 		if osym.UsedInIface() {
 			l.SetAttrUsedInIface(gi, true)
 		}
-		if strings.HasPrefix(name, "runtime.") ||
-			(loadingRuntimePkg && strings.HasPrefix(name, "type:")) {
-			if bi := goobj.BuiltinIdx(name, int(osym.ABI())); bi != -1 {
-				// This is a definition of a builtin symbol. Record where it is.
+		// Check if this symbol is a builtin. Support both regular names (runtime.foo)
+		// and obfuscated names (obfPkg.foo) when GARBLE_PKGPATH_MAP is set.
+		// For hashed symbols, we need to read the name specifically for builtin checking
+		// since type symbols like type:unsafe.Pointer are content-addressable.
+		builtinCheckName := name
+		if builtinCheckName == "" && (kind == hashed64Def || kind == hashedDef) {
+			builtinCheckName = osym.Name(r.Reader)
+		}
+		builtinName := TranslateGarbleBuiltinName(builtinCheckName)
+		// Builtins are runtime symbols. Restrict registration to names that are
+		// either already canonical or explicitly translate back to runtime, so an
+		// unrelated symbol cannot be registered through a name collision.
+		if strings.HasPrefix(builtinName, "runtime.") {
+			if bi := goobj.BuiltinIdx(builtinName, int(osym.ABI())); bi != -1 {
+				l.builtinSyms[bi] = gi
+			}
+		} else if strings.HasPrefix(builtinCheckName, "type:") {
+			// Type symbols have ABI 0, retry with ABI 0
+			if bi := goobj.BuiltinIdx(builtinName, 0); bi != -1 {
 				l.builtinSyms[bi] = gi
 			}
 		}

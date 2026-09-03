@@ -460,7 +460,10 @@ func canMergeLoad(target, load *Value) bool {
 // isSameCall reports whether aux is the same as the given named symbol.
 func isSameCall(aux Aux, name string) bool {
 	fn := aux.(*AuxCall).Fn
-	return fn != nil && fn.String() == name
+	if fn == nil {
+		return false
+	}
+	return objabi.OriginalSymbol(fn.String()) == name
 }
 
 func isMalloc(aux Aux) bool {

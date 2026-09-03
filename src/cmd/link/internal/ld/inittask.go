@@ -84,6 +84,12 @@ func (ctxt *Link) inittaskSym(rootNames []string, symName string) loader.Sym {
 	var roots []loader.Sym
 	for _, n := range rootNames {
 		p := ldr.Lookup(n, 0)
+		if p == 0 {
+			// Try garble obfuscated name
+			if obfName := loader.GetGarbleObfuscatedSymbol(n); obfName != "" {
+				p = ldr.Lookup(obfName, 0)
+			}
+		}
 		if p != 0 {
 			roots = append(roots, p)
 		}
