@@ -1161,7 +1161,8 @@ func WriteBasicTypes() {
 	// another possible choice would be package main,
 	// but using runtime means fewer copies in object files.
 	// The code here needs to be in sync with writtenByWriteBasicTypes above.
-	if base.Ctxt.Pkgpath != "runtime" {
+	pkgpath := objabi.OriginalPackagePath(base.Ctxt.Pkgpath)
+	if pkgpath != "runtime" {
 		return
 	}
 
@@ -1348,7 +1349,9 @@ func NeedEmit(typ *types.Type) bool {
 
 	switch sym := typ.Sym(); {
 	case writtenByWriteBasicTypes(typ):
-		return base.Ctxt.Pkgpath == "runtime"
+		// WriteBasicTypes emits these descriptors from runtime even when its
+		// package path was obfuscated.
+		return objabi.OriginalPackagePath(base.Ctxt.Pkgpath) == "runtime"
 
 	case sym == nil:
 		// Anonymous type; possibly never seen before or ever again.

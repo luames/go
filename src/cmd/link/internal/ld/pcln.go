@@ -5,14 +5,6 @@
 package ld
 
 import (
-	"os"
-)
-
-import (
-	"unicode"
-)
-
-import (
 	"cmd/internal/goobj"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
@@ -22,9 +14,12 @@ import (
 	"fmt"
 	"internal/abi"
 	"internal/buildcfg"
+	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 const funcSize = 11 * 4 // funcSize is the size of the _func object in runtime/runtime2.go
@@ -276,7 +271,17 @@ func (state *pclntab) generatePCHeader(ctxt *Link) {
 
 		// Write header.
 		// Keep in sync with runtime/symtab.go:pcHeader and package debug/gosym.
-		header.SetUint32(ctxt.Arch, 0, uint32(abi.CurrentPCLnTabMagic))
+		magic := uint32(abi.CurrentPCLnTabMagic)
+		// Garble patches the runtime to expect a per-build pclntab magic value.
+		// Leave the standard value unchanged for ordinary linker invocations.
+		if value := os.Getenv("GARBLE_LINK_MAGIC"); value != "" {
+			parsed, err := strconv.ParseUint(value, 10, 32)
+			if err != nil {
+				panic(fmt.Errorf("[garble] invalid magic value %q: %v", value, err))
+			}
+			magic = uint32(parsed)
+		}
+		header.SetUint32(ctxt.Arch, 0, magic)
 		header.SetUint8(ctxt.Arch, 6, uint8(ctxt.Arch.MinLC))
 		header.SetUint8(ctxt.Arch, 7, uint8(ctxt.Arch.PtrSize))
 		off := header.SetUint(ctxt.Arch, 8, uint64(state.nfunc))
@@ -290,19 +295,6 @@ func (state *pclntab) generatePCHeader(ctxt *Link) {
 		if off != size {
 			panic(fmt.Sprintf("pcHeader size: %d != %d", off, size))
 		}
-
-		// Use garble prefix in variable names to minimize collision risk
-		garbleMagicStr := os.Getenv("GARBLE_LINK_MAGIC")
-		if garbleMagicStr == "" {
-			panic("[garble] magic value must be set")
-		}
-		var garbleMagicVal uint32
-		// Use fmt package instead of strconv to avoid importing a new package
-		if _, err := fmt.Sscan(garbleMagicStr, &garbleMagicVal); err != nil {
-			panic(fmt.Errorf("[garble] invalid magic value %s: %v", garbleMagicStr, err))
-		}
-
-		header.SetUint32(ctxt.Arch, 0, garbleMagicVal)
 	}
 
 	state.pcheader = state.addGeneratedSym(ctxt, "runtime.pcheader", size, int32(ctxt.Arch.PtrSize), writeHeader)
@@ -338,7 +330,8 @@ func walkFuncs(ctxt *Link, funcs []loader.Sym, f func(loader.Sym)) {
 // func symbol to the name offset in runtime.funcnamtab.
 func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[loader.Sym]uint32 {
 	nameOffsets := make(map[loader.Sym]uint32, state.nfunc)
-
+	// Tiny mode coalesces names after removing unexported function names. Some
+	// names remain because the runtime or reflection machinery identifies them.
 	garbleTiny := os.Getenv("GARBLE_LINK_TINY") == "true"
 	tinyOffsetsByName := make(map[string]uint32)
 
@@ -346,47 +339,39 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 	writeFuncNameTab := func(ctxt *Link, s loader.Sym) {
 		symtab := ctxt.loader.MakeSymbolUpdater(s)
 		if garbleTiny {
+			// Multiple functions can share a reduced name, so write each distinct
+			// string once at the offset assigned during the sizing pass below.
 			for name, off := range tinyOffsetsByName {
 				symtab.AddCStringAt(int64(off), name)
 			}
 			return
 		}
-
 		for s, off := range nameOffsets {
-			symtab.AddCStringAt(int64(off), ctxt.loader.SymName(s))
+			name := ctxt.loader.SymName(s)
+			var funcID abi.FuncID
+			if fi := ctxt.loader.FuncInfo(s); fi.Valid() {
+				funcID = fi.FuncID()
+			}
+			symtab.AddCStringAt(int64(off), runtimeMetadataFuncName(name, funcID))
 		}
 	}
 
 	// Loop through the CUs, and calculate the size needed.
 	var size int64
-
 	if garbleTiny {
-		size = 1 // first byte is reserved for the shared empty name
+		size = 1
 		tinyOffsetsByName[""] = 0
 	}
-	// Kinds of SymNames found in the wild:
-	//
-	// * reflect.Value.CanAddr
-	// * reflect.(*Value).String
-	// * reflect.w6cEoKc
-	// * internal/abi.(*RegArgs).IntRegArgAddr
-	// * type:.eq.runtime.special
-	// * runtime/internal/atomic.(*Pointer[go.shape.string]).Store
-	//
-	// Checking whether the first rune after the last dot is uppercase seems enough.
 	isExported := func(name string) bool {
 		for _, r := range name[strings.LastIndexByte(name, '.')+1:] {
 			return unicode.IsUpper(r)
 		}
 		return false
 	}
-	// The runtime consumes a few function names for correctness, so keep
-	// exported names as before, the exact reflect stubs used for dynamic GC
-	// maps, a panicwrap-parseable name for value-method wrappers, and the
-	// "runtime." and "internal/runtime/atomic" prefixes tested by
-	// runtime.panicCheck1, isSystemGoroutine and sigprof. Everything else
-	// collapses to a shared sentinel that reveals no unexported identity.
+	// tinyFuncName keeps names consumed by runtime or reflection and replaces
+	// other unexported names with the smallest metadata-safe representation.
 	tinyFuncName := func(name string, funcID abi.FuncID) string {
+		name = runtimeMetadataFuncName(name, funcID)
 		if isExported(name) {
 			return name
 		}
@@ -408,9 +393,6 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 		case strings.HasPrefix(name, "internal/runtime/atomic"):
 			pkg = "internal/runtime/atomic"
 		}
-		// panicwrap parses only pointer-to-value method wrappers, whose
-		// linker names contain ".(*T).method". Other wrapper thunks (for
-		// example bound method values ending in -fm) do not need a name.
 		if funcID == abi.FuncIDWrapper && strings.Contains(name, ".(*") {
 			if pkg == "" {
 				pkg = "_"
@@ -422,10 +404,8 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 		}
 		return pkg + ".?"
 	}
-
 	walkFuncs(ctxt, funcs, func(s loader.Sym) {
 		name := ctxt.loader.SymName(s)
-
 		if garbleTiny {
 			var funcID abi.FuncID
 			if fi := ctxt.loader.FuncInfo(s); fi.Valid() {
@@ -441,13 +421,52 @@ func (state *pclntab) generateFuncnametab(ctxt *Link, funcs []loader.Sym) map[lo
 			nameOffsets[s] = off
 			return
 		}
-
+		var funcID abi.FuncID
+		if fi := ctxt.loader.FuncInfo(s); fi.Valid() {
+			funcID = fi.FuncID()
+		}
+		name = runtimeMetadataFuncName(name, funcID)
 		nameOffsets[s] = uint32(size)
 		size += int64(len(name) + 1) // NULL terminate
 	})
 
 	state.funcnametab = state.addGeneratedSym(ctxt, "runtime.funcnametab", size, 1, writeFuncNameTab)
 	return nameOffsets
+}
+
+// runtimeMetadataFuncName restores package prefixes used by runtime safety and
+// profiling checks while keeping each obfuscated function name unique. A few
+// runtime and reflect functions require their exact canonical names.
+func runtimeMetadataFuncName(name string, funcID abi.FuncID) string {
+	original := objabi.OriginalFuncName(name)
+	switch funcID {
+	case abi.FuncID_goexit, abi.FuncID_gopanic:
+		return original
+	}
+	if original == "reflect.makeFuncStub" || original == "reflect.methodValueCall" {
+		return original
+	}
+
+	originalPkg := ""
+	switch {
+	case strings.HasPrefix(original, "runtime."):
+		originalPkg = "runtime"
+	case strings.HasPrefix(original, "internal/runtime/"):
+		if dot := strings.IndexByte(original, '.'); dot >= 0 {
+			originalPkg = original[:dot]
+		}
+	case strings.HasPrefix(original, "reflect."):
+		originalPkg = "reflect"
+	}
+	if originalPkg == "" || strings.HasPrefix(name, originalPkg+".") {
+		return name
+	}
+	for dot := strings.LastIndexByte(name, '.'); dot >= 0; dot = strings.LastIndexByte(name[:dot], '.') {
+		if objabi.OriginalPackagePath(name[:dot]) == originalPkg {
+			return originalPkg + name[dot:]
+		}
+	}
+	return name
 }
 
 // walkFilenames walks funcs, calling a function for each filename used in each
@@ -1036,24 +1055,21 @@ func writeFuncs(ctxt *Link, sb *loader.SymbolBuilder, funcs []loader.Sym, inlSym
 		}
 	}
 
-	// Moving next code higher is not recommended.
-	// Only at the end of the current function no edits between go versions
-	garbleEntryOffKeyStr := os.Getenv("GARBLE_LINK_ENTRYOFF_KEY")
-	if garbleEntryOffKeyStr == "" {
-		panic("[garble] entryOff key must be set")
-	}
-	var garbleEntryOffKey uint32
-	// Use fmt package instead of strconv to avoid importing a new package
-	if _, err := fmt.Sscan(garbleEntryOffKeyStr, &garbleEntryOffKey); err != nil {
-		panic(fmt.Errorf("[garble] invalid entryOff key %s: %v", garbleEntryOffKeyStr, err))
-	}
-
-	garbleData := sb.Data()
-	for _, off := range startLocations {
-		entryOff := ctxt.Arch.ByteOrder.Uint32(garbleData[off:])
-		nameOff := ctxt.Arch.ByteOrder.Uint32(garbleData[off+4:])
-
-		sb.SetUint32(ctxt.Arch, int64(off), entryOff^(nameOff*garbleEntryOffKey))
+	if value := os.Getenv("GARBLE_LINK_ENTRYOFF_KEY"); value != "" {
+		parsed, err := strconv.ParseUint(value, 10, 32)
+		if err != nil {
+			panic(fmt.Errorf("[garble] invalid entryOff key %q: %v", value, err))
+		}
+		key := uint32(parsed)
+		data := sb.Data()
+		// Garble patches runtime.funcInfo.entry to reverse this operation. Mixing
+		// the function-name offset into each entry keeps equal PCs from producing
+		// equal encoded values while retaining a four-byte entryOff field.
+		for _, off := range startLocations {
+			entryOff := ctxt.Arch.ByteOrder.Uint32(data[off:])
+			nameOff := ctxt.Arch.ByteOrder.Uint32(data[off+4:])
+			sb.SetUint32(ctxt.Arch, int64(off), entryOff^(nameOff*key))
+		}
 	}
 }
 

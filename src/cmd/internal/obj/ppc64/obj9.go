@@ -78,7 +78,10 @@ func encodePPC64RLDCMask(mask int64) (mb, me int) {
 // Is this a symbol which should never have a TOC prologue generated?
 // These are special functions which should not have a TOC regeneration
 // prologue.
+var originalFuncName = objabi.OriginalFuncName
+
 func isNOTOCfunc(name string) bool {
+	name = originalFuncName(name)
 	switch {
 	case name == "runtime.duffzero":
 		return true

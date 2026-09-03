@@ -148,7 +148,7 @@ func putelfsym(ctxt *Link, x loader.Sym, typ elf.SymType, curbind elf.SymBind) {
 
 		// This should match the preprocessing behavior in cmd/internal/obj/ppc64/obj9.go
 		// where the distinct global entry is inserted.
-		if !hasPCrel && ldr.SymName(x) != "runtime.duffzero" && ldr.SymName(x) != "runtime.duffcopy" {
+		if !hasPCrel && !loader.IsGarbleRuntimeDuff(ldr.SymName(x)) {
 			other |= 3 << 5
 		}
 	}
@@ -521,7 +521,7 @@ func (ctxt *Link) symtab(pcln *pclntab) []sym.SymKind {
 			ldr.SetAttrNotInSymbolTable(s, true)
 			ldr.SetCarrierSym(s, symgostring)
 
-		case strings.HasPrefix(name, "runtime.gcbits."):
+		case loader.HasGarbleRuntimePrefix(name, ".gcbits."):
 			symGroupType[s] = sym.SGCBITS
 			ldr.SetAttrNotInSymbolTable(s, true)
 			ldr.SetCarrierSym(s, symgcbits)
@@ -781,8 +781,58 @@ func (ctxt *Link) symtab(pcln *pclntab) []sym.SymKind {
 	// When linking an object that does not contain the runtime we are
 	// creating the moduledata from scratch and it does not have a
 	// compiler-provided size, so read it from the type data.
-	moduledatatype := ldr.Lookup("type:runtime.moduledata", 0)
-	moduledata.SetSize(decodetypeSize(ctxt.Arch, ldr.Data(moduledatatype)))
+	lookupType := func(name string) loader.Sym {
+		if s := ldr.Lookup(name, 0); s != 0 {
+			return s
+		}
+		// Some type symbols are only present as static.
+		if s := ldr.Lookup(name, sym.SymVerStatic); s != 0 {
+			return s
+		}
+		return 0
+	}
+
+	moduledatatype := lookupType("type:runtime.moduledata")
+	if moduledatatype == 0 {
+		// Try with garble-obfuscated name
+		if obfSym := loader.GetGarbleObfuscatedSymbol("runtime.moduledata"); obfSym != "" {
+			moduledatatype = lookupType("type:" + obfSym)
+		}
+	}
+	if moduledatatype == 0 {
+		// For runtime types, the type name itself is not obfuscated,
+		// but the package path may be. Try "type:<obfPkg>.moduledata".
+		obfPkg := loader.GetGarbleObfuscatedPath("runtime")
+		if obfPkg != "runtime" {
+			moduledatatype = lookupType("type:" + obfPkg + ".moduledata")
+		}
+	}
+	var typeSize int64
+	if moduledatatype != 0 {
+		typeSize = decodetypeSize(ctxt.Arch, ldr.Data(moduledatatype))
+	}
+
+	// Fallback: use the size of firstmoduledata if available (garble mode).
+	firstmd := ldr.Lookup("runtime.firstmoduledata", 0)
+	if firstmd == 0 {
+		// Try obfuscated name
+		if obfSym := loader.GetGarbleObfuscatedSymbol("runtime.firstmoduledata"); obfSym != "" {
+			firstmd = ldr.Lookup(obfSym, 0)
+		}
+	}
+	var firstmdSize int64
+	if firstmd != 0 {
+		firstmdSize = ldr.SymSize(firstmd)
+	}
+
+	// Choose the larger size to avoid truncating moduledata fields.
+	if typeSize == 0 && firstmdSize == 0 {
+		Exitf("cannot determine runtime.moduledata size")
+	}
+	if typeSize < firstmdSize {
+		typeSize = firstmdSize
+	}
+	moduledata.SetSize(typeSize)
 	moduledata.Grow(moduledata.Size())
 
 	lastmoduledatap := ldr.CreateSymForUpdate("runtime.lastmoduledatap", 0)
