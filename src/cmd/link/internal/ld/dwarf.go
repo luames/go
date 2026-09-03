@@ -1205,7 +1205,7 @@ func (d *dwctxt) writeDirFileTables(unit *sym.CompilationUnit, lsu *loader.Symbo
 		// We can't use something that may be dead-code
 		// eliminated from a binary here. proc.go contains
 		// main and the scheduler, so it's not going anywhere.
-		if i := strings.Index(name, "runtime/proc.go"); i >= 0 && unit.Lib.Pkg == "runtime" {
+		if i := strings.Index(name, "runtime/proc.go"); i >= 0 && loader.IsGarbleRuntimePkg(unit.Lib.Pkg) {
 			d.dwmu.Lock()
 			if gdbscript == "" {
 				k := strings.Index(name, "runtime/proc.go")
@@ -1949,7 +1949,7 @@ func dwarfGenerateDebugInfo(ctxt *Link) {
 			ctxt.compUnits = append(ctxt.compUnits, unit)
 
 			// We need at least one runtime unit.
-			if unit.Lib.Pkg == "runtime" {
+			if loader.IsGarbleRuntimePkg(unit.Lib.Pkg) {
 				ctxt.runtimeCU = unit
 			}
 

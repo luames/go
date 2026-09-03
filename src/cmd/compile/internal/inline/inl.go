@@ -495,7 +495,8 @@ opSwitch:
 			if name.Class == ir.PFUNC {
 				s := name.Sym()
 				fn := s.Name
-				switch s.Pkg.Path {
+				pkgPath := base.TranslateGarblePkgPath(s.Pkg.Path)
+				switch pkgPath {
 				case "internal/abi":
 					switch fn {
 					case "NoEscape":
