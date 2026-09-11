@@ -14,6 +14,7 @@ import (
 	"cmd/compile/internal/ssa"
 	"cmd/compile/internal/typecheck"
 	"cmd/compile/internal/types"
+	"cmd/internal/objabi"
 	"cmd/internal/sys"
 )
 
@@ -2393,27 +2394,28 @@ func findIntrinsic(sym *types.Sym) intrinsicBuilder {
 	if sym.Pkg == ir.Pkgs.Runtime {
 		pkg = "runtime"
 	}
-	if base.Flag.Race && pkg == "sync/atomic" {
+	fn := sym.Name
+	origPkg, origFn := objabi.OriginalSymbolParts(pkg, fn)
+	if base.Flag.Race && origPkg == "sync/atomic" {
 		// The race detector needs to be able to intercept these calls.
 		// We can't intrinsify them.
 		return nil
 	}
 	// Skip intrinsifying math functions (which may contain hard-float
 	// instructions) when soft-float
-	if Arch.SoftFloat && pkg == "math" {
+	if Arch.SoftFloat && origPkg == "math" {
 		return nil
 	}
 
-	fn := sym.Name
 	if ssa.IntrinsicsDisable {
-		if pkg == "internal/runtime/sys" && (fn == "GetCallerPC" || fn == "GetCallerSP" || fn == "GetClosurePtr") ||
-			pkg == simdPackage {
+		if origPkg == "internal/runtime/sys" && (origFn == "GetCallerPC" || origFn == "GetCallerSP" || origFn == "GetClosurePtr") ||
+			origPkg == simdPackage {
 			// These runtime functions don't have definitions, must be intrinsics.
 		} else {
 			return nil
 		}
 	}
-	return intrinsics.lookup(Arch.LinkArch.Arch, pkg, fn)
+	return intrinsics.lookup(Arch.LinkArch.Arch, origPkg, origFn)
 }
 
 func IsIntrinsicCall(n *ir.CallExpr) bool {

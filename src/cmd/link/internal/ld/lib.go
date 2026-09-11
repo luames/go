@@ -446,10 +446,24 @@ func loadinternal(ctxt *Link, name string) *sym.Library {
 		if shlib := ctxt.PackageShlib[name]; shlib != "" {
 			return addlibpath(ctxt, "internal", "internal", "", name, shlib, zerofp)
 		}
+		// Try obfuscated name
+		obfName := loader.GetGarbleObfuscatedPath(name)
+		if obfName != name {
+			if shlib := ctxt.PackageShlib[obfName]; shlib != "" {
+				return addlibpath(ctxt, "internal", "internal", "", obfName, shlib, zerofp)
+			}
+		}
 	}
 	if ctxt.PackageFile != nil {
 		if pname := ctxt.PackageFile[name]; pname != "" {
 			return addlibpath(ctxt, "internal", "internal", pname, name, "", zerofp)
+		}
+		// Try obfuscated name - use obfuscated name for the Library.Pkg as well
+		obfName := loader.GetGarbleObfuscatedPath(name)
+		if obfName != name {
+			if pname := ctxt.PackageFile[obfName]; pname != "" {
+				return addlibpath(ctxt, "internal", "internal", pname, obfName, "", zerofp)
+			}
 		}
 		ctxt.Logf("loadinternal: cannot find %s\n", name)
 		return nil
@@ -474,7 +488,7 @@ func loadinternal(ctxt *Link, name string) *sym.Library {
 		}
 	}
 
-	if name == "runtime" {
+	if loader.IsGarbleRuntimePkg(name) {
 		Exitf("error: unable to find runtime.a")
 	}
 	ctxt.Logf("warning: unable to find %s.a\n", name)
@@ -877,7 +891,12 @@ func (ctxt *Link) linksetup() {
 		mdsb = ctxt.loader.MakeSymbolUpdater(moduledata)
 		ctxt.loader.SetAttrLocal(moduledata, true)
 	} else {
-		moduledata = ctxt.loader.LookupOrCreateSym("runtime.firstmoduledata", 0)
+		// First check if Lookup finds the symbol
+		lookupName := "runtime.firstmoduledata"
+		if obf := loader.GetGarbleObfuscatedSymbol(lookupName); obf != "" {
+			lookupName = obf
+		}
+		moduledata = ctxt.loader.LookupOrCreateSym(lookupName, 0)
 		mdsb = ctxt.loader.MakeSymbolUpdater(moduledata)
 	}
 	if mdsb.Type() != 0 && mdsb.Type() != sym.SDYNIMPORT {
@@ -1015,7 +1034,7 @@ func typeSymbolMangle(name string) string {
 		// Issue 58800: instantiated symbols may include a type name, which may contain "@"
 		return name
 	}
-	if strings.HasPrefix(name, "type:runtime.") {
+	if loader.HasGarbleRuntimePrefix(name, ".") {
 		return name
 	}
 	if strings.HasPrefix(name, "go:string.") {

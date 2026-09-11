@@ -567,8 +567,9 @@ func IsFuncPCIntrinsic(n *CallExpr) bool {
 		return false
 	}
 	fn := n.Fun.(*Name).Sym()
+	pkgPath := objabi.OriginalPackagePath(fn.Pkg.Path)
 	return (fn.Name == "FuncPCABI0" || fn.Name == "FuncPCABIInternal") &&
-		fn.Pkg.Path == "internal/abi"
+		pkgPath == "internal/abi"
 }
 
 // IsIfaceOfFunc inspects whether n is an interface conversion from a direct

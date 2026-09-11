@@ -101,7 +101,8 @@ func LookupRuntimeVar(name string) *obj.LSym {
 
 // LookupRuntimeABI looks up a name in package runtime using the given ABI.
 func LookupRuntimeABI(name string, abi obj.ABI) *obj.LSym {
-	return base.PkgLinksym("runtime", name, abi)
+	pkgPath, name := base.GarbleRuntimeSymbol("runtime", name)
+	return base.PkgLinksym(pkgPath, name, abi)
 }
 
 // InitCoverage loads the definitions for routines called

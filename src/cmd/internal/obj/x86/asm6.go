@@ -2851,8 +2851,11 @@ func oclass(ctxt *obj.Link, p *obj.Prog, a *obj.Addr) int {
 
 		// TODO(rsc): DUFFZERO/DUFFCOPY encoding forgot to set a->index
 		// and got Yi32 in an earlier version of this code.
-		// Keep doing that until we fix yduff etc.
-		if a.Sym != nil && strings.HasPrefix(a.Sym.Name, "runtime.duff") {
+		// Keep doing that until we fix yduff etc. Identify Garble-renamed
+		// operations by opcode, while retaining the symbol-name fallback used by
+		// assembler unit tests and other synthetic callers.
+		if p.As == obj.ADUFFZERO || p.As == obj.ADUFFCOPY ||
+			(a.Sym != nil && strings.HasPrefix(objabi.OriginalFuncName(a.Sym.Name), "runtime.duff")) {
 			return Yi32
 		}
 

@@ -7,6 +7,7 @@ package noder
 import (
 	"go/constant"
 
+	"cmd/compile/internal/base"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/syntax"
 	"cmd/compile/internal/typecheck"
@@ -118,7 +119,9 @@ func isTypeParam(t types2.Type) bool {
 func isNotInHeap(typ types2.Type) bool {
 	typ = types2.Unalias(typ)
 	if named, ok := typ.(*types2.Named); ok {
-		if obj := named.Obj(); obj.Name() == "nih" && obj.Pkg().Path() == "internal/runtime/sys" {
+		obj := named.Obj()
+		pkgPath, name := base.GarbleRuntimeSymbol("internal/runtime/sys", "nih")
+		if obj.Name() == name && obj.Pkg().Path() == pkgPath {
 			return true
 		}
 		typ = named.Underlying()

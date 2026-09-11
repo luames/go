@@ -214,7 +214,7 @@ func ParseFlags() {
 
 	// Compute whether we're compiling the runtime from the package path. Test
 	// code can also use the flag to set this explicitly.
-	if Flag.Std && objabi.LookupPkgSpecial(Ctxt.Pkgpath).Runtime {
+	if (Flag.Std || IsGarblePkgPath(Ctxt.Pkgpath)) && objabi.LookupPkgSpecial(Ctxt.Pkgpath).Runtime {
 		Flag.CompilingRuntime = true
 	}
 

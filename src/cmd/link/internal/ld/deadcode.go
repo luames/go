@@ -124,7 +124,14 @@ func (d *deadcodePass) init() {
 		d.mark(s, 0)
 	}
 
+	// Try both original and obfuscated names (for garble support)
 	d.mapinitnoop = d.ldr.Lookup("runtime.mapinitnoop", abiInternalVer)
+	if d.mapinitnoop == 0 {
+		// Try looking up with obfuscated package path
+		if obfName := loader.GetGarbleObfuscatedSymbol("runtime.mapinitnoop"); obfName != "" {
+			d.mapinitnoop = d.ldr.Lookup(obfName, abiInternalVer)
+		}
+	}
 	if d.mapinitnoop == 0 {
 		panic("could not look up runtime.mapinitnoop")
 	}
