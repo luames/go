@@ -2810,7 +2810,7 @@ func (ctxt *Link) textaddress() {
 			// lay down trampolines after each function
 			for ; ntramps < len(ctxt.tramps); ntramps++ {
 				tramp := ctxt.tramps[ntramps]
-				if ctxt.IsAIX() && strings.HasPrefix(ldr.SymName(tramp), "runtime.text.") {
+				if ctxt.IsAIX() && loader.HasGarbleRuntimePrefix(ldr.SymName(tramp), ".text.") {
 					// Already set in assignAddress
 					continue
 				}

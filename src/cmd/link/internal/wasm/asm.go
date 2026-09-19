@@ -220,7 +220,7 @@ func asmb2(ctxt *ld.Link, ldr *loader.Loader) {
 		}
 
 		typ := uint32(0)
-		if sig, ok := wasmFuncTypes[ldr.SymName(fn)]; ok {
+		if sig, ok := wasmFuncTypes[objabi.OriginalFuncName(ldr.SymName(fn))]; ok {
 			typ = lookupType(sig, &types)
 		}
 		if s := ldr.WasmTypeSym(fn); s != 0 {

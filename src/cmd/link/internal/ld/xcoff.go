@@ -783,7 +783,7 @@ func (f *xcoffFile) writeSymbolFunc(ctxt *Link, x loader.Sym) []xcoffSym {
 	// Check if a new file is detected.
 	ldr := ctxt.loader
 	name := ldr.SymName(x)
-	if strings.Contains(name, "-tramp") || strings.HasPrefix(name, "runtime.text.") {
+	if strings.Contains(name, "-tramp") || loader.HasGarbleRuntimePrefix(name, ".text.") {
 		// Trampoline don't have a FILE so there are considered
 		// in the current file.
 		// Same goes for runtime.text.X symbols.
@@ -883,12 +883,14 @@ func putaixsym(ctxt *Link, x loader.Sym, t SymbolType) {
 		return
 
 	case TextSym:
-		if ldr.SymPkg(x) != "" || strings.Contains(name, "-tramp") || strings.HasPrefix(name, "runtime.text.") {
+		if ldr.SymPkg(x) != "" || strings.Contains(name, "-tramp") || loader.HasGarbleRuntimePrefix(name, ".text.") {
 			// Function within a file
 			syms = xfile.writeSymbolFunc(ctxt, x)
 		} else {
 			// Only runtime.text and runtime.etext come through this way
-			if name != "runtime.text" && name != "runtime.etext" && name != "go:buildid" {
+			// When garble obfuscates, we need to translate the name back to check
+			translatedName := loader.TranslateGarbleBuiltinName(name)
+			if translatedName != "runtime.text" && translatedName != "runtime.etext" && name != "go:buildid" {
 				Exitf("putaixsym: unknown text symbol %s", name)
 			}
 			s := &XcoffSymEnt64{

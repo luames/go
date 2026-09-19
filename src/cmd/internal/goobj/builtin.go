@@ -4,7 +4,17 @@
 
 package goobj
 
-import "internal/buildcfg"
+import (
+	"cmd/internal/objabi"
+	"internal/buildcfg"
+)
+
+func init() {
+	builtinMap = make(map[string]int, len(builtins))
+	for i, b := range builtins {
+		builtinMap[b.name] = i
+	}
+}
 
 // Builtin (compiler-generated) function references appear
 // frequently. We assign special indices for them, so they
@@ -25,6 +35,8 @@ func BuiltinName(i int) (string, int) {
 // BuiltinIdx returns the index of the builtin with the
 // given name and abi, or -1 if it is not a builtin.
 func BuiltinIdx(name string, abi int) int {
+	// Translate obfuscated name to original for builtin lookup.
+	name = objabi.OriginalSymbol(name)
 	i, ok := builtinMap[name]
 	if !ok {
 		return -1
@@ -38,10 +50,3 @@ func BuiltinIdx(name string, abi int) int {
 //go:generate go run mkbuiltin.go
 
 var builtinMap map[string]int
-
-func init() {
-	builtinMap = make(map[string]int, len(builtins))
-	for i, b := range builtins {
-		builtinMap[b.name] = i
-	}
-}
