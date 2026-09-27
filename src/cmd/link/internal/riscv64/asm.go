@@ -725,7 +725,7 @@ func trampoline(ctxt *ld.Link, ldr *loader.Loader, ri int, rs, s loader.Sym) {
 				// Do not reuse trampoline defined in other module.
 				continue
 			}
-			if oName == "runtime.deferreturn" {
+			if rs == ldr.Lookup("runtime.deferreturn", ldr.SymVersion(rs)) {
 				ldr.SetIsDeferReturnTramp(tramp, true)
 			}
 			if ldr.SymValue(tramp) == 0 {

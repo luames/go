@@ -1208,7 +1208,7 @@ func trampoline(ctxt *ld.Link, ldr *loader.Loader, ri int, rs, s loader.Sym) {
 				// Look up the trampoline in case it already exists
 
 				tramp = ldr.LookupOrCreateSym(name, ldr.SymVersion(rs))
-				if oName == "runtime.deferreturn" {
+				if rs == ldr.Lookup("runtime.deferreturn", ldr.SymVersion(rs)) {
 					ldr.SetIsDeferReturnTramp(tramp, true)
 				}
 				if ldr.SymValue(tramp) == 0 {
