@@ -449,7 +449,7 @@ func resolveAssignedCallees(assigns []*ir.AssignStmt) []*ir.Name {
 
 func isEscapeNonString(fns []*ir.Name, fntype *types.Type) bool {
 	return len(fns) == 1 &&
-		fns[0].Sym().Pkg.Path == "internal/abi" &&
+		base.TranslateGarblePkgPath(fns[0].Sym().Pkg.Path) == "internal/abi" &&
 		strings.HasPrefix(fns[0].Sym().Name, "EscapeNonString[") &&
 		len(fntype.Params()) == 2 && fntype.Params()[1].Type.IsShape()
 }
