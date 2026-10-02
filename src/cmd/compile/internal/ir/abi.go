@@ -7,6 +7,7 @@ package ir
 import (
 	"cmd/compile/internal/base"
 	"cmd/internal/obj"
+	"cmd/internal/objabi"
 )
 
 // InitLSym defines f's obj.LSym and initializes it based on the
@@ -65,9 +66,10 @@ func setupTextLSym(f *Func, flag int) {
 	// WRAPPER functions (runtime.callNN). Its ABI wrapper needs WRAPPER
 	// flag as well.
 	fnname := f.Sym().Name
-	if base.Ctxt.Pkgpath == "runtime" && fnname == "reflectcall" {
+	pkgpath, fnname := objabi.OriginalPackageSymbol(base.Ctxt.Pkgpath, fnname)
+	if pkgpath == "runtime" && fnname == "reflectcall" {
 		flag |= obj.WRAPPER
-	} else if base.Ctxt.Pkgpath == "reflect" {
+	} else if pkgpath == "reflect" {
 		switch fnname {
 		case "callReflect", "callMethod":
 			flag |= obj.WRAPPER
