@@ -1120,7 +1120,9 @@ func init() {
 // constant string initializer. User names and pragmas alone cannot authorize
 // removing a call. Keep this separate from the general side-effect analysis.
 func certifiedLiteralInit(as *ir.AssignStmt, nm *ir.Name) bool {
-	if *base.Flag.Shared || *base.Flag.Dynlink || *base.Flag.LinkShared {
+	// -shared requests PIC, also used by ordinary Darwin arm64 executables.
+	// Garble withholds certificates for actual library and plugin build modes.
+	if *base.Flag.Dynlink || *base.Flag.LinkShared {
 		return false
 	}
 	// A coalesced linkname alias may lose this definition's R_KEEP edge.
