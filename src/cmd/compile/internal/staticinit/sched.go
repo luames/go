@@ -5,6 +5,7 @@
 package staticinit
 
 import (
+	"encoding/json"
 	"fmt"
 	"go/constant"
 	"go/token"
@@ -1099,6 +1100,49 @@ func addStr(n *ir.AddStringExpr) ir.Node {
 	return nn
 }
 
+var literalInitCertificates map[string]string
+
+// Read the explicit manifest at startup, even when there are no dynamic inits
+// or outlining is disabled. A failed handoff must never silently succeed.
+func init() {
+	if path := os.Getenv("GARBLE_LITERAL_INITS_FILE"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			base.Fatalf("cannot read literal init certificate: %v", err)
+		}
+		if err := json.Unmarshal(data, &literalInitCertificates); err != nil {
+			base.Fatalf("invalid literal init certificate: %v", err)
+		}
+	}
+}
+
+// Garble supplies this manifest only for factories it generated from a single
+// constant string initializer. User names and pragmas alone cannot authorize
+// removing a call. Keep this separate from the general side-effect analysis.
+func certifiedLiteralInit(as *ir.AssignStmt, nm *ir.Name) bool {
+	if *base.Flag.Shared || *base.Flag.Dynlink || *base.Flag.LinkShared {
+		return false
+	}
+	// A coalesced linkname alias may lose this definition's R_KEEP edge.
+	// Both linkname directives, including their one-argument form, set Linkname.
+	if nm.Sym().Linkname != "" {
+		return false
+	}
+	factory, ok := literalInitCertificates[nm.Sym().Name]
+	if !ok {
+		return false
+	}
+	call, ok := as.Y.(*ir.CallExpr)
+	if !ok || call.Op() != ir.OCALLFUNC || len(call.Args) != 0 || len(call.Init()) != 0 || len(as.Init()) != 0 || nm.Class != ir.PEXTERN || nm.Sym().Pkg != types.LocalPkg || !nm.Type().IsString() {
+		base.Fatalf("invalid certified literal initializer for %v", nm)
+	}
+	callee, ok := call.Fun.(*ir.Name)
+	if !ok || callee.Class != ir.PFUNC || callee.Sym().Pkg != types.LocalPkg || callee.Sym().Name != factory || callee.Func == nil || callee.Type().NumParams() != 0 || callee.Type().NumResults() != 1 || !call.Type().IsString() {
+		base.Fatalf("invalid certified literal factory for %v", nm)
+	}
+	return true
+}
+
 const wrapGlobalMapInitSizeThreshold = 20
 
 // tryWrapGlobalInit returns a new outlined function to contain global
@@ -1119,7 +1163,8 @@ func tryWrapGlobalInit(n ir.Node) *ir.Func {
 		return nil
 	}
 	nm := as.X.(*ir.Name)
-	if !nm.Type().IsMap() {
+	certifiedLiteral := certifiedLiteralInit(as, nm)
+	if !nm.Type().IsMap() && !certifiedLiteral {
 		return nil
 	}
 
@@ -1135,7 +1180,7 @@ func tryWrapGlobalInit(n ir.Node) *ir.Func {
 	}
 
 	// Reject smaller candidates if not in stress mode.
-	if rsiz < wrapGlobalMapInitSizeThreshold && base.Debug.WrapGlobalMapCtl != 2 {
+	if !certifiedLiteral && rsiz < wrapGlobalMapInitSizeThreshold && base.Debug.WrapGlobalMapCtl != 2 {
 		if base.Debug.WrapGlobalMapDbg > 1 {
 			fmt.Fprintf(os.Stderr, "=-= skipping %v size too small at %d\n",
 				nm, rsiz)
@@ -1144,7 +1189,7 @@ func tryWrapGlobalInit(n ir.Node) *ir.Func {
 	}
 
 	// Reject right hand sides with side effects.
-	if AnySideEffects(as.Y) {
+	if !certifiedLiteral && AnySideEffects(as.Y) {
 		if base.Debug.WrapGlobalMapDbg > 0 {
 			fmt.Fprintf(os.Stderr, "=-= rejected %v due to side effects\n", nm)
 		}
